@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"os"
 	"strconv"
+	"time"
 )
 
 type WeatherResponse struct {
@@ -71,6 +72,38 @@ func GetWeatherForecast(latitude float64, longitude float64) (*WeatherResponse, 
 
 	return &weatherResponse, nil
 }
+
+func findCurrentHourIndex(hourlyTimes []string, timezone string) (int, error) {
+	// Load the timezone from the weather response
+	loc, err := time.LoadLocation(timezone)
+	if err != nil {
+		return 0, fmt.Errorf("error loading timezone %s: %w", timezone, err)
+	}
+
+	// Get current time in the weather location's timezone
+	currentTime := time.Now().In(loc)
+	fmt.Printf("Current time in %s: %s\n", timezone, currentTime.Format("2006-01-02 15:04:05"))
+
+	// Find the next hour from current time in the hourly forecast
+	for i, timeStr := range hourlyTimes {
+		// Parse the forecast time - it should already be in the correct timezone
+		forecastTime, err := time.ParseInLocation("2006-01-02T15:04", timeStr, loc)
+		if err != nil {
+			continue
+		}
+
+		// Find the first forecast time that is after the current time
+		if forecastTime.After(currentTime) {
+			fmt.Printf("Found next forecast time: %s (index %d)\n", forecastTime.Format("2006-01-02 15:04"), i)
+			return i, nil
+		}
+	}
+
+	// If we can't find a future hour, start from the beginning
+	fmt.Println("No future forecast times found, starting from beginning")
+	return 0, nil
+}
+
 func main() {
 	defaultLat := 40.71 //New York City
 	defaultLon := -74.01
@@ -130,17 +163,32 @@ func main() {
 		fmt.Printf("  Max Wind Speed: %.1f km/h\n\n", response.Daily.WindSpeed10mMax[i])
 	}
 
+	// Find the current hour index and print the next 5 hours
+	currentIndex, err := findCurrentHourIndex(response.Hourly.Time, response.Timezone)
+	if err != nil {
+		fmt.Printf("Warning: Could not determine current time, showing from beginning: %v\n", err)
+		currentIndex = 0
+	}
+
 	hoursToPrint := 5
 	fmt.Printf("Hourly Forecast (next %d hours):\n", hoursToPrint)
-	if len(response.Hourly.Time) < hoursToPrint {
-		hoursToPrint = len(response.Hourly.Time)
+
+	// Make sure we don't go beyond available data
+	maxIndex := len(response.Hourly.Time)
+	if currentIndex+hoursToPrint > maxIndex {
+		hoursToPrint = maxIndex - currentIndex
 	}
 
 	for j := 0; j < hoursToPrint; j++ {
+		idx := currentIndex + j
+		if idx >= len(response.Hourly.Time) {
+			break
+		}
+
 		fmt.Printf("  %s: %.1f°C, Precipitation: %.1f mm (%.1f%% probability)\n",
-			response.Hourly.Time[j],
-			response.Hourly.Temperature2m[j],
-			response.Hourly.Precipitation[j],
-			response.Hourly.PrecipitationProbability[j])
+			response.Hourly.Time[idx],
+			response.Hourly.Temperature2m[idx],
+			response.Hourly.Precipitation[idx],
+			response.Hourly.PrecipitationProbability[idx])
 	}
 }
